@@ -236,4 +236,47 @@ impl Metrics {
     pub fn record_shielded_rail_fallback(&self) {
         self.shielded_rail_fallback_total.inc();
     }
+
+    /// Renders every collector in [`Self::registry`] in the Prometheus text
+    /// exposition format, ready to serve from a `/metrics` endpoint.
+    ///
+    /// Returns an error only if the registry's collectors are in an invalid
+    /// state (e.g. mismatched label cardinality) — a programming mistake,
+    /// not a runtime condition callers need to handle specially.
+    pub fn export(&self) -> Result<String, prometheus::Error> {
+        use prometheus::Encoder;
+        let encoder = prometheus::TextEncoder::new();
+        let metric_families = self.registry.gather();
+        let mut buffer = Vec::new();
+        encoder.encode(&metric_families, &mut buffer)?;
+        Ok(String::from_utf8(buffer).unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_includes_registered_metric_names() {
+        let metrics = Metrics::new().unwrap();
+        metrics
+            .http_requests_total
+            .with_label_values(&["GET", "/health", "200"])
+            .inc();
+
+        let output = metrics.export().unwrap();
+        assert!(output.contains("http_requests_total"));
+        assert!(output.contains("perigee_shielded_rail_fallback_total"));
+    }
+
+    #[test]
+    fn export_reflects_recorded_observations() {
+        let metrics = Metrics::new().unwrap();
+        metrics.record_shielded_rail_fallback();
+        metrics.record_shielded_rail_fallback();
+
+        let output = metrics.export().unwrap();
+        assert!(output.contains("perigee_shielded_rail_fallback_total 2"));
+    }
 }
